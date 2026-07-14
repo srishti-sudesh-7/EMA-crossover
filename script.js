@@ -1,4 +1,5 @@
-const KEY = "-";
+const API_KEY = "--";
+const XLSX = require("xlsx");
 
 async function getAccessToken() {
     const body = new URLSearchParams({
@@ -12,7 +13,7 @@ async function getAccessToken() {
         {   method: "POST",
             headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
-                Authorization: `Bearer ${KEY}`
+                Authorization: `Bearer ${API_KEY}`
             },
             body}
     );
@@ -44,8 +45,16 @@ async function getSymbol(headers) {
 }
 
 async function getChartData(symbolId, headers) {
-    const to = Math.floor(Date.now() / 1000);
-    const from = to - (30 * 60);
+    const today = new Date();
+
+    const f = new Date(today);
+    f.setHours(9, 15, 0, 0);
+    const t = new Date(today);
+    t.setHours(15, 30, 0, 0);
+
+    const from = Math.floor(f.getTime()/1000);
+    const to = Math.floor(t.getTime()/1000);
+
     const url =
     `https://api.tradejini.com/v2/api/mkt-data/chart/interval-data?from=${from}&to=${to}&interval=1&id=${symbolId}`;
     const response = await fetch(url, {headers});
@@ -72,23 +81,43 @@ function crossover(ema10,ema12, candles){
     else console.log("no crossover");
 }
 
+function createExcel(candles, ema10, ema12) {
+    const rows = candles.d.bars.map((bar, i) => ({
+        Time: new Date(bar[0]).toLocaleTimeString(),
+        Open: bar[1],
+        High: bar[2],
+        Low: bar[3],
+        Close: bar[4],
+        Volume: bar[5],
+        EMA10: ema10[i],
+        EMA12: ema12[i]
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook,worksheet,"Nifty50, 14-JUL");
+    XLSX.writeFile(workbook, "Nifty50_EMA_Report.xlsx");
+    console.log("excel file created");
+}
+
 async function scan(headers, symbolId) {
     const now = new Date();
     const mins = now.getHours()*60 + now.getMinutes();
-
     const marketOpen = 9*60 + 15;
     const marketClose = 15*60 + 30;
-    if (mins < marketOpen || mins > marketClose) {
-        console.log("Market closed");
-        return;
-    }
-
+    
     const candles = await getChartData(symbolId, headers);
     const closes = candles.d.bars.map(bar => bar[4]);
     const ema10 = calcEMA(closes, 10);
     const ema12 = calcEMA(closes, 12);
-    crossover(ema10, ema12, candles);
+
+    if (mins < marketOpen || mins > marketClose) {
+        console.log("Market closed");
+    }
+    else crossover(ema10, ema12, candles);
+    createExcel(candles, ema10, ema12);
 }
+
 
 async function main() {
     const token = await getAccessToken();
@@ -97,7 +126,7 @@ async function main() {
     };
     const symbolId = await getSymbol(headers);
     await scan(headers, symbolId);
-    
+
     setInterval(async () => {
         await scan(headers, symbolId);
     }, 60000);
